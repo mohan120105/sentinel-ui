@@ -12,7 +12,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import CitationMap from './CitationMap'
+import SentinelReasoning from './SentinelReasoning'
 import {
   Send,
   Sparkles,
@@ -347,7 +347,7 @@ function MessageBubble({ message, index, onAskSME }) {
         </div>
 
         <CitationsPanel citations={message.citations} />
-        <CitationMap graph={message.graph} />
+        <SentinelReasoning reasoning={message.sentinel_reasoning} matchTier={message.retrieval_tier} />
         <button
           type="button"
           onClick={() => onAskSME?.(message, index)}
