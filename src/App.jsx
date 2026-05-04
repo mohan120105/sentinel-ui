@@ -12,7 +12,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import SentinelReasoning from './SentinelReasoning'
 import {
   Send,
   Sparkles,
@@ -111,7 +110,6 @@ function normalizeRetrievalTier(message) {
   const rawTier = String(message?.retrieval_tier || message?.tier || '').trim().toLowerCase()
   if (rawTier === 'exact_match' || rawTier === 'exact') return 'exact'
   if (rawTier === 'partial_match' || rawTier === 'partial') return 'partial'
-  if (rawTier === 'access_denied' || rawTier === 'access-denied') return 'access_denied'
   if (rawTier === 'no_match' || rawTier === 'no-match' || rawTier === 'none') return 'no_match'
   return ''
 }
@@ -347,10 +345,6 @@ function MessageBubble({ message, index, onAskSME }) {
           </ReactMarkdown>
         </div>
 
-        <SentinelReasoning
-          reasoning={message.sentinel_reasoning}
-          matchTier={message.retrieval_tier}
-        />
         <CitationsPanel citations={message.citations} />
         <button
           type="button"
@@ -574,7 +568,6 @@ export default function App() {
   const [uploadStatus, setUploadStatus] = useState('idle')
   const [uploadResult, setUploadResult] = useState(null)
   const [isHistoryLoading, setIsHistoryLoading] = useState(false)
-  const activeEmployeeTier = getUserTier(employeeId)
 
   const messagesEndRef = useRef(null)
   const inputRef = useRef(null)
@@ -614,11 +607,9 @@ export default function App() {
    * Why: Session discovery is explicit and centralized to preserve consistent
    * sidebar ordering and support stateful transcript replay.
    */
-  const loadSessions = useCallback(async (activeEmployeeId) => {
+  const loadSessions = useCallback(async () => {
     try {
-      const res = await fetch(
-        `${API_BASE}/sessions?employee_id=${encodeURIComponent(activeEmployeeId)}`
-      )
+      const res = await fetch(`${API_BASE}/sessions`)
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       const data = await res.json()
       setSessions(Array.isArray(data) ? data : [])
@@ -629,29 +620,12 @@ export default function App() {
   }, [])
 
   useEffect(() => {
-    if (chatControllerRef.current) {
-      try { chatControllerRef.current.abort() } catch (e) {}
-      chatControllerRef.current = null
-    }
-    if (enhanceControllerRef.current) {
-      try { enhanceControllerRef.current.abort() } catch (e) {}
-      enhanceControllerRef.current = null
-    }
-
-    setMessages([])
-    setInputText('')
-    setSuggestedPrompt(null)
-    setFetchError(null)
-    setIsLoading(false)
-    setIsHistoryLoading(false)
-
     if (!employeeId) {
       setSessions([])
       return
     }
 
-    setCurrentSession(generateUUID())
-    loadSessions(employeeId)
+    loadSessions()
   }, [employeeId, loadSessions])
 
   useEffect(() => {
@@ -728,12 +702,10 @@ export default function App() {
    * Why: Hydrates full message history from backend persistence so analysts can
    * reconstruct prior decision context for audit and escalation.
    */
-  const loadSessionMessages = useCallback(async (sessionId, activeEmployeeId) => {
+  const loadSessionMessages = useCallback(async (sessionId) => {
     setIsHistoryLoading(true)
     try {
-      const res = await fetch(
-        `${API_BASE}/sessions/${sessionId}/messages?employee_id=${encodeURIComponent(activeEmployeeId)}`
-      )
+      const res = await fetch(`${API_BASE}/sessions/${sessionId}/messages`)
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       const data = await res.json()
       const mapped = (Array.isArray(data) ? data : []).map((msg) => ({
@@ -746,9 +718,6 @@ export default function App() {
         citations: Array.isArray(msg.citations) ? msg.citations : [],
         graph: normalizeGraphPayload(msg),
         retrieval_tier: normalizeRetrievalTier(msg),
-        sentinel_reasoning:
-          typeof msg.sentinel_reasoning === 'string' ? msg.sentinel_reasoning : '',
-        tier: typeof msg.tier === 'number' ? msg.tier : null,
       }))
       setMessages(mapped)
       setFetchError(null)
@@ -778,8 +747,8 @@ export default function App() {
     setCurrentSession(sessionId)
     setInputText('')
     setSuggestedPrompt(null)
-    loadSessionMessages(sessionId, employeeId)
-  }, [employeeId, loadSessionMessages])
+    loadSessionMessages(sessionId)
+  }, [loadSessionMessages])
 
   /** Start a brand-new chat session. */
   const handleNewChat = useCallback(() => {
@@ -876,13 +845,10 @@ export default function App() {
           citations: data.citations ?? [],
           graph: normalizeGraphPayload(data),
           retrieval_tier: normalizeRetrievalTier(data),
-          sentinel_reasoning:
-            typeof data.sentinel_reasoning === 'string' ? data.sentinel_reasoning : '',
-          tier: activeEmployeeTier,
         }
         setMessages((prev) => [...prev, assistantMsg])
 
-        await loadSessions(employeeId)
+        await loadSessions()
       } catch (err) {
         // If the fetch was aborted, do not show an error message.
         if (err && err.name === 'AbortError') return
@@ -895,8 +861,6 @@ export default function App() {
             citations: [],
             graph: { nodes: [], edges: [] },
             retrieval_tier: 'no_match',
-            sentinel_reasoning: '',
-            tier: activeEmployeeTier,
           },
         ])
       } finally {
@@ -907,7 +871,7 @@ export default function App() {
         }
       }
     },
-    [activeEmployeeTier, employeeId, inputText, isLoading, currentSession, loadSessions]
+    [employeeId, inputText, isLoading, currentSession, loadSessions]
   )
 
   /**
