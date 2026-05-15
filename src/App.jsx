@@ -1125,6 +1125,18 @@ export default function App() {
       }
       chatControllerRef.current = null
     }
+    
+    // Add a message to indicate the user stopped the response
+    setMessages((prev) => [
+      ...prev,
+      {
+        role: 'assistant',
+        content: '⏹️ Generation stopped by user.',
+        citations: [],
+        graph: { nodes: [], edges: [] },
+        retrieval_tier: null,
+      },
+    ])
     setIsLoading(false)
   }, [])
 
