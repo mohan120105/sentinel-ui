@@ -33,6 +33,7 @@ import {
 // ── Constants ─────────────────────────────────────────────────────────────────
 
 const API_BASE = 'https://sentinel-hybridrag.onrender.com'
+const STRICT_NO_ANSWER = 'I cannot find a verified active policy for this in the current database.'
 
 // ── Utilities ─────────────────────────────────────────────────────────────────
 
@@ -114,6 +115,11 @@ function normalizeRetrievalTier(message) {
   if (rawTier === 'partial_match' || rawTier === 'partial') return 'partial'
   if (rawTier === 'no_match' || rawTier === 'no-match' || rawTier === 'none') return 'no_match'
   return ''
+}
+
+function isStrictNoAnswerMessage(message) {
+  const content = String(message?.content || '').trim()
+  return content === STRICT_NO_ANSWER || normalizeRetrievalTier(message) === 'no_match'
 }
 
 // ── Sub-components ────────────────────────────────────────────────────────────
@@ -281,6 +287,7 @@ function CitationsPanel({ citations, onOpenCitation }) {
 /** A single chat bubble (user or assistant). */
 function MessageBubble({ message, index, onAskSME, onOpenCitation }) {
   const isUser = message.role === 'user'
+  const suppressEvidence = !isUser && isStrictNoAnswerMessage(message)
 
   if (isUser) {
     return (
@@ -355,8 +362,10 @@ function MessageBubble({ message, index, onAskSME, onOpenCitation }) {
           </ReactMarkdown>
         </div>
 
-        <CitationsPanel citations={message.citations} onOpenCitation={onOpenCitation} />
-            {Array.isArray(message.followup_suggestions) && message.followup_suggestions.length > 0 ? (
+        {!suppressEvidence ? (
+          <CitationsPanel citations={message.citations} onOpenCitation={onOpenCitation} />
+        ) : null}
+            {!suppressEvidence && Array.isArray(message.followup_suggestions) && message.followup_suggestions.length > 0 ? (
               <div className="mt-3 rounded-2xl border border-blue-700/40 bg-blue-950/30 px-3 py-3">
                 <p className="text-[11px] uppercase tracking-[0.24em] text-blue-300">
                   Validated follow-ups
@@ -930,7 +939,12 @@ export default function App() {
           typeof msg.enhanced_prompt === 'string' && msg.enhanced_prompt.trim()
             ? msg.enhanced_prompt
             : null,
-        citations: Array.isArray(msg.citations) ? msg.citations : [],
+        citations:
+          isStrictNoAnswerMessage(msg) || normalizeRetrievalTier(msg) === 'no_match'
+            ? []
+            : Array.isArray(msg.citations)
+              ? msg.citations
+              : [],
         graph: normalizeGraphPayload(msg),
         retrieval_tier: normalizeRetrievalTier(msg),
       }))
@@ -1057,10 +1071,18 @@ export default function App() {
         const assistantMsg = {
           role: 'assistant',
           content: data.answer,
-          citations: data.citations ?? [],
+          citations:
+            String(data.answer || '').trim() === STRICT_NO_ANSWER || normalizeRetrievalTier(data) === 'no_match'
+              ? []
+              : data.citations ?? [],
           graph: normalizeGraphPayload(data),
           retrieval_tier: normalizeRetrievalTier(data),
-          followup_suggestions: Array.isArray(data.followup_suggestions) ? data.followup_suggestions : [],
+          followup_suggestions:
+            String(data.answer || '').trim() === STRICT_NO_ANSWER || normalizeRetrievalTier(data) === 'no_match'
+              ? []
+              : Array.isArray(data.followup_suggestions)
+                ? data.followup_suggestions
+                : [],
         }
         setMessages((prev) => [...prev, assistantMsg])
 
@@ -1089,6 +1111,22 @@ export default function App() {
     },
     [employeeId, inputText, isLoading, currentSession, loadSessions]
   )
+
+  /** 
+   * Why: Allows user to cancel in-flight generation by aborting the fetch controller.
+   * Backend receives AbortError and gracefully cleans up resources.
+   */
+  const handleStopGeneration = useCallback(() => {
+    if (chatControllerRef.current) {
+      try { 
+        chatControllerRef.current.abort() 
+      } catch (e) {
+        console.error('Failed to abort chat request:', e)
+      }
+      chatControllerRef.current = null
+    }
+    setIsLoading(false)
+  }, [])
 
   /**
    * Why: Edge-side prompt enhancement increases retrieval precision before
@@ -1564,6 +1602,18 @@ export default function App() {
                 >
                   <Send size={15} className="text-white" />
                 </button>
+                {isLoading && (
+                  <button
+                    type="button"
+                    onClick={handleStopGeneration}
+                    className="flex-shrink-0 h-8 px-2.5 rounded-xl border border-red-500/70 text-red-300 hover:bg-red-600/50 hover:border-red-400/70 transition-colors inline-flex items-center gap-1.5 self-end"
+                    aria-label="Stop generation"
+                    title="Cancel generation"
+                  >
+                    <X size={14} className="text-red-300" />
+                    <span className="text-xs">Stop</span>
+                  </button>
+                )}
               </form>
               {enhanceError && (
                 <p className="mt-2 text-xs text-amber-300/90">{enhanceError}</p>
